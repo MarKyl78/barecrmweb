@@ -1,66 +1,56 @@
+// middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 
 const SE_HOSTS = new Set(["barecrm.se", "www.barecrm.se"]);
 const IO_HOSTS = new Set(["barecrm.io", "www.barecrm.io"]);
 
-function hasLocale(pathname: string) {
-  return (
-    pathname === "/sv" ||
-    pathname.startsWith("/sv/") ||
-    pathname === "/en" ||
-    pathname.startsWith("/en/")
-  );
+function isLocalePath(pathname: string) {
+  return pathname === "/sv" || pathname.startsWith("/sv/") || pathname === "/en" || pathname.startsWith("/en/");
 }
 
-export default function middleware(req: NextRequest) {
-  const url = req.nextUrl;
-  const host = (req.headers.get("host") || "").toLowerCase();
-  const pathname = url.pathname;
+function isPublicAsset(pathname: string) {
+  // next internals + vanliga publika filer/mappar
+  if (pathname.startsWith("/_next")) return true;
+  if (pathname.startsWith("/logo/")) return true;
+  if (pathname.startsWith("/screenshots/")) return true;
+  if (pathname === "/favicon.ico") return true;
+  if (pathname === "/robots.txt") return true;
+  if (pathname === "/sitemap.xml") return true;
 
-  // Skip Next internals / static
-  if (
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon") ||
-    pathname.startsWith("/robots") ||
-    pathname.startsWith("/sitemap")
-  ) {
+  // allt som ser ut som en fil med ändelse (png, svg, css, js, etc)
+  return /\.[a-zA-Z0-9]+$/.test(pathname);
+}
+
+export function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+
+  // ✅ släpp igenom assets alltid
+  if (isPublicAsset(pathname)) {
     return NextResponse.next();
   }
 
-  const isSe = SE_HOSTS.has(host);
-  const isIo = IO_HOSTS.has(host);
-
-  // localhost/dev fallback: svenska
-  const defaultLocale = isIo ? "en" : "sv";
-
-  // Root "/" → locale
-  if (pathname === "/") {
-    url.pathname = `/${defaultLocale}`;
-    return NextResponse.redirect(url);
+  // Redan på /sv eller /en → låt den vara
+  if (isLocalePath(pathname)) {
+    return NextResponse.next();
   }
 
-  // Wrong-domain locale → redirect to correct domain
-  if (isIo && (pathname === "/sv" || pathname.startsWith("/sv/"))) {
-    const target = new URL(req.url);
-    target.host = "www.barecrm.se";
-    return NextResponse.redirect(target);
-  }
+  const host = req.headers.get("host")?.toLowerCase() ?? "";
 
-  if (isSe && (pathname === "/en" || pathname.startsWith("/en/"))) {
-    const target = new URL(req.url);
-    target.host = "www.barecrm.io";
-    return NextResponse.redirect(target);
-  }
+  // På vercel preview/localhost: välj default (sv), men bygg så du kan ändra senare
+  // (Du kan sätta default till en om du vill)
+  let locale: "sv" | "en" = "sv";
 
-  // Missing locale prefix → add it
-  if (!hasLocale(pathname)) {
-    url.pathname = `/${defaultLocale}${pathname}`;
-    return NextResponse.redirect(url);
-  }
+  if (SE_HOSTS.has(host)) locale = "sv";
+  if (IO_HOSTS.has(host)) locale = "en";
 
-  return NextResponse.next();
+  const url = req.nextUrl.clone();
+  url.pathname = `/${locale}${pathname === "/" ? "" : pathname}`;
+  return NextResponse.redirect(url);
 }
 
+// Viktigt: matcha inte assets/next internals
 export const config = {
-  matcher: ["/((?!api).*)"],
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|logo/|screenshots/).*)",
+  ],
 };
